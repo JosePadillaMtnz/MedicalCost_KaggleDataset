@@ -2,6 +2,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.stats as stats
 
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import cross_val_score
@@ -9,9 +10,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 import sklearn.metrics as metrics
-
-from regressors import stats
-
+#!pip install --upgrade pip setuptools==57.5.0
+#from regressors import stats
 
 
 ### Basic functions to ease the EDA process ###
@@ -157,6 +157,89 @@ def plot_numerical_distributions(df, cols_per_row=4):
     plt.show()
 
 
+def residuals_coefficients_summary(model, x_test, y_test, x_cols):
+    """
+    Replicates the stats.summary functionality for a given model.
+    
+    Parameters:
+        model: A fitted linear regression model (e.g., from sklearn).
+        x_test: Test features (numpy array or pandas DataFrame).
+        y_test: Test target variable (numpy array or pandas Series).
+        x_cols: Names of the features (list of strings).
+    
+    Returns:
+        A dictionary with regression statistics.
+    """
+    # Ensure x_test and y_test are numpy arrays
+    x_test = np.array(x_test)
+    y_test = np.array(y_test)
+    
+    # Predictions and residuals
+    y_pred = model.predict(x_test)
+    residuals = y_test - y_pred
+
+    # Residual statistics
+    residual_min = residuals.min()
+    residual_1q = np.percentile(residuals, 25)
+    residual_median = np.median(residuals)
+    residual_3q = np.percentile(residuals, 75)
+    residual_max = residuals.max()
+
+    # Coefficients and calculations
+    beta = np.concatenate(([model.intercept_], model.coef_))  # Combine intercept and coefficients
+    n, p = x_test.shape[0], x_test.shape[1] + 1  # Include intercept
+    x_test_with_intercept = np.column_stack((np.ones(n), x_test))  # Add intercept to design matrix
+
+    # RSS and variance
+    RSS = np.sum(residuals**2)
+    residual_variance = RSS / (n - p)
+    
+    # Covariance matrix and standard errors
+    cov_matrix = residual_variance * np.linalg.inv(x_test_with_intercept.T @ x_test_with_intercept)
+    std_errors = np.sqrt(np.diag(cov_matrix))
+    
+    # t-values and p-values
+    t_values = beta / std_errors
+    p_values = [2 * (1 - stats.t.cdf(np.abs(t), df=n-p)) for t in t_values]
+
+    # Find the maximum feature name length
+    feature_names = ['_intercept'] + x_cols
+    max_feature_length = max(len(feature) for feature in feature_names)
+    feature_col_width = max(15, max_feature_length + 2)  # Minimum width of 15, adjust dynamically
+
+    # Display results
+    print("Residuals:\n")
+    print(f"  Min: {residual_min:.4f}")
+    print(f"  1Q: {residual_1q:.4f}")
+    print(f"  Median: {residual_median:.4f}")
+    print(f"  3Q: {residual_3q:.4f}")
+    print(f"  Max: {residual_max:.4f}\n")
+
+    print("Coefficients:\n")
+    header = f"{'Feature':<{feature_col_width}} {'Estimate':>12} {'Std. Error':>12} {'t value':>12} {'p value':>12}"
+    print(header)
+    print("-" * len(header))
+    for feature, coef, std_err, t, p in zip(feature_names, beta, std_errors, t_values, p_values):
+        print(f"{feature:<{feature_col_width}} {coef:>12.4f} {std_err:>12.4f} {t:>12.4f} {p:>12.6f}")
+
+    # Return as dictionary
+    results = {
+        "Residuals": {
+            "Min": residual_min,
+            "1Q": residual_1q,
+            "Median": residual_median,
+            "3Q": residual_3q,
+            "Max": residual_max
+        },
+        "Coefficients": {
+            feature: {"Estimate": coef, "Std. Error": std_err, "t value": t, "p value": p}
+            for feature, coef, std_err, t, p in zip(['_intercept'] + x_cols, beta, std_errors, t_values, p_values)
+        }
+    }
+    
+    return results
+
+
 def get_predictions_and_initial_score(df, x_cols, y_col):
     """
     Function to get predictions and initial score of a model, used to evaluate.
@@ -188,7 +271,7 @@ def get_predictions_and_initial_score(df, x_cols, y_col):
     y_test = y_test.reshape(-1)
 
     print("\n==== Summary ====\n")
-    stats.summary(model, x_test, y_test, x_cols)
+    result = residuals_coefficients_summary(model, x_test, y_test, x_cols)
 
     residuals = np.subtract(y_test, y_pred.reshape(-1))
     plt.scatter(y_pred, residuals)
